@@ -58,3 +58,5 @@
 #endif
 
 
+#define  MSG_INSERTlIST WM_USER+1001
+#define		MSG_SEARCH_SUCESS	WM_USER+1002

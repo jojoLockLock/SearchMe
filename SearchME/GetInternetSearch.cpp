@@ -1,8 +1,11 @@
 #include "StdAfx.h"
 #include "GetInternetSearch.h"
+#include "SearchMEDlg.h"
 
+HANDLE CGetInternetSearch::g_hThreadEvent =NULL;
 CGetInternetSearch::CGetInternetSearch(void)
 {
+	g_hThreadEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 }
 
 CGetInternetSearch::~CGetInternetSearch(void)
@@ -21,8 +24,7 @@ vector<SearchListInfo> CGetInternetSearch::vListInfo;
 BOOL CGetInternetSearch::SearchItem(CString strKeyWord,CString &html)
 {
 		CString strBaiduSearch;
-		//strBaiduSearch.Format(_T("http://www.baidu.com/s?wd=%s/"),strKeyWord);
-		strBaiduSearch.Format(_T("http://119.29.40.159/search/%s.html"),strKeyWord);
+		strBaiduSearch.Format(_T("%s/search/%s.html"), MAIN_URL,strKeyWord);
 		//MessageBox(NULL,strBaiduSearch,NULL,NULL);
 		CInternetSession session;
 		CHttpFile * file = NULL;
@@ -31,8 +33,8 @@ BOOL CGetInternetSearch::SearchItem(CString strKeyWord,CString &html)
 			file = (CHttpFile *)session.OpenURL(strBaiduSearch);
 			if(file)
 			{
-				TCHAR line[512];
-				while(file->ReadString(line,512) != NULL)
+				TCHAR line[1024*2];
+				while(file->ReadString(line,1024*2) != NULL)
 				{
 					int nBufferSize = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)line, -1, NULL, 0);
 					wchar_t *pBuffer = new wchar_t[nBufferSize+1];
@@ -56,16 +58,32 @@ BOOL CGetInternetSearch::SearchItem(CString strKeyWord,CString &html)
 
 unsigned int __stdcall CGetInternetSearch::ParserInsertThread(void *param)
 {
-	SearchPageTmp *pThis = NULL;
+	
+	SearchPageTmp *pItem = NULL;
+	CGetInternetSearch* pthis = NULL;
 	if (param == NULL)
 		return -1;
-	pThis = (SearchPageTmp *)param;
+	pItem = (SearchPageTmp *)param;
+	pthis = (CGetInternetSearch*)(pItem->param);
+	
 	CString strTmp,strTmpPage;
-	strTmpPage.Format(_T("%s/%s"),pThis->strSearchItem,pThis->strPage);
-	SearchItem(strTmpPage,strTmp);
-	ParserHtmlListName(strTmp);
-	//Sleep(50);
-	//MessageBox(NULL,strTmp,NULL,NULL);
+	CString strKeyword(pItem->strSearchItem);
+	CString nPageItem[5] = { _T("1-3"), _T("2-3"), _T("3-3"), _T("4-3"), _T("5-3") };
+	int i = 0;
+	while (i <5)
+	{
+		WaitForSingleObject(g_hThreadEvent, INFINITE);
+		strTmpPage.Empty();
+		strTmp.Empty();
+		strTmpPage.Format(_T("%s/%s"), strKeyword, nPageItem[i]);
+
+		pthis->SearchItem(strTmpPage, strTmp);
+		pthis->ParserHtmlListName(strTmp);
+		SetEvent(g_hThreadEvent);
+		i++;
+	}
+	
+	pSeachMEDlg->SendMessage(MSG_SEARCH_SUCESS, NULL, NULL);
 	return 0;
 }
 /************************************
@@ -76,10 +94,7 @@ unsigned int __stdcall CGetInternetSearch::ParserInsertThread(void *param)
 /************************************/
 BOOL CGetInternetSearch::NextOrMorePage(CString strSearchItem)
 {
-	CString secondPageItem;	//第二页搜索 简单实现
-	CString thridPageItem;	//第三页搜索 简单实现
-	CString fourthPageItem;	//第四页搜索 简单实现
-	CString fifthPageItem; //第五页
+
 	CString nPageItem[5] = {_T("1-3"),_T("2-3"),_T("3-3"),_T("4-3"),_T("5-3")};
 	CString strtmp,strhtml;
 	//解析网页
@@ -88,22 +103,18 @@ BOOL CGetInternetSearch::NextOrMorePage(CString strSearchItem)
 	SearchItem(strtmp,strhtml);
 	ParserHtmlListName(strhtml);
 	*/
-	HANDLE  handle[5];
-	for (int i = 0; i < 5 ;i++)
-	{
+	SetEvent(g_hThreadEvent);
+	HANDLE  handle;
 
-			//HANDLE  handle;  
-			//MessageBox(NULL,nPageItem[i],NULL,NULL);
-			SearchPageTmp sitem;
-			sitem.strSearchItem = strSearchItem;
-			sitem.strPage = nPageItem[i];
-			handle[i] =(HANDLE)_beginthreadex(NULL, 0, ParserInsertThread, &sitem, 0, NULL);
-			//handle[i] = AfxBeginThread((AFX_THREADPROC)ParserInsertThread,&sitem,0,0,0,NULL);
-			//handle[i]=CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)ParserInsertThread, &sitem, 0, NULL);
-			Sleep(50);
-	}
-	
-	WaitForMultipleObjects(5, handle, TRUE, INFINITE); 
+	SearchPageTmp sitem;
+	sitem.strSearchItem = strSearchItem;
+
+	sitem.param = this;
+	handle =(HANDLE)_beginthreadex(NULL, 0, ParserInsertThread, &sitem, 0, NULL);
+	//handle[i] = AfxBeginThread((AFX_THREADPROC)ParserInsertThread,&sitem,0,0,0,NULL);
+	//handle[i]=CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)ParserInsertThread, &sitem, 0, NULL);
+	Sleep(50);
+	//WaitForMultipleObjects(5, handle, TRUE, INFINITE); 
 	return 1;
 }
 /************************************
@@ -117,44 +128,179 @@ BOOL CGetInternetSearch::ParserHtmlListName(CString testbuffer)
 	while(testbuffer.Find(_T("<li>")) >=0 )
 	{
 		SearchListInfo m_Search;
-		CString strTmpName;
-		// ListName
-		cout<<"***********************"<<endl;
-		int splace = testbuffer.Find(_T("target=\"_blank\">"));
-		int eplace =testbuffer.Mid(splace).Find(_T("</a>"));
-		//cout<<testbuffer.Mid(splace+4,eplace-splace-10)<<endl;
-		strTmpName = testbuffer.Mid(splace+16,eplace-16);
-		strTmpName.Replace(_T("<b>"),_T(""));
-		strTmpName.Replace(_T("</b>"),_T(""));
-		//Size
-		int sSize = testbuffer.Find(_T("\"lightColor\">"));
-		int eSize = testbuffer.Find(_T("</span></li>"));
-		//cout<<testbuffer.Mid(sSize+13,eSize-sSize-13)<<endl;
-		//Link
-		int smagnet = testbuffer.Find(_T("<a href=\"magnet"));
-		int emagnet = testbuffer.Find(_T("</a> <a"));
-		//cout<<testbuffer.Mid(smagnet+9,emagnet-smagnet-32)<<endl;
-		//link_hot
-		int shot = testbuffer.Find(_T("<span>下载热度"));
-		int ehot = testbuffer.Find(_T("</b></span>"));
-		//cout<<testbuffer.Mid(shot+19,ehot-shot-19)<<endl;
-		CString temp;
-		temp.Format(_T("%d,%d"),shot,ehot);
-		//MessageBox(NULL,temp,NULL,NULL);
-		//break;
 
-		m_Search.SearchListName = strTmpName;
-		m_Search.SearchLink = testbuffer.Mid(smagnet+9,emagnet-smagnet-32);
-		m_Search.SearchSize = testbuffer.Mid(sSize+13,eSize-sSize-13);
-		m_Search.SearchHotPoint = testbuffer.Mid(shot+14,ehot-shot-14);
+
+		cout<<"***********************"<<endl;
+
+		//Link
+		int smagnet = testbuffer.Find(_T("a href=\"/wiki"));
+		int emagnet = testbuffer.Mid(smagnet).Find(_T("target=\"_blank\""));
+		if (smagnet != -1 && emagnet != -1)	{ 
+			CString Link = GetParseMagnet(testbuffer.Mid(smagnet + 8, emagnet - 10));
+			m_Search.SearchLink = Link;
+		}
+		
+		// ListName
+		CString strTmpName;
+		int splace = testbuffer.Find(_T("target=\"_blank\">"));
+		int eplace = testbuffer.Mid(splace).Find(_T("</script>"));
+		if (splace != -1 && eplace != -1)	{ 
+			strTmpName = testbuffer.Mid(splace + 82, eplace - 86);
+			strTmpName.Replace(_T("\"+\""), _T(""));
+			CString strDecodeName = UrlDecode(strTmpName);
+			strDecodeName.Replace(_T("</b>"), _T(""));
+			strDecodeName.Replace(_T("<b>"), _T(""));
+			m_Search.SearchListName = strDecodeName;
+		}
+		
+
+		//Size
+		int sSize = testbuffer.Find(_T("cpill yellow-pill"));
+		int eSize = testbuffer.Mid(sSize).Find(_T("</span>"));
+		if (sSize != -1 && eSize != -1)	{ 
+			//cout<<testbuffer.Mid(sSize+13,eSize-sSize-13)<<endl;
+			m_Search.SearchSize = testbuffer.Mid(sSize + 19, eSize - 24);
+		}
+		
+
+		//link_hot
+		int shot = testbuffer.Find(_T("Hot：<b>"));
+		int ehot = testbuffer.Mid(shot).Find(_T("</b></span>"));
+		if (shot != -1 && ehot != -1)
+		{//cout<<testbuffer.Mid(shot+19,ehot-shot-19)<<endl;
+			m_Search.SearchHotPoint = testbuffer.Mid(shot + 7, ehot - 7);
+		}
 		
 		
 		vListInfo.push_back(m_Search);
 
-		testbuffer = testbuffer.Mid(emagnet+9);
+		testbuffer = testbuffer.Mid(shot +55);
 		//testbuffer = testbuffer.Mid(eplace+4);
 		//Sleep(1000);
+		//EnterCriticalSection(&cs_Search);
+		pSeachMEDlg->SendMessage( MSG_INSERTlIST, NULL, (LPARAM)&m_Search);
+		//LeaveCriticalSection(&cs_Search);
+	}
+	
+	return TRUE;
+}
+
+
+CString CGetInternetSearch::GetParseMagnet(CString wiki)
+{
+	if (wiki.GetLength() <= 0)
+	{
+		return NULL;
+	}
+	CString strURL, strHTML;
+	strURL = MAIN_URL + wiki;
+	//SearchItem(strURL, strHTML);
+	DownloadStrings(strURL, strHTML);		//上面读不出来 
+	if (strHTML.GetLength() >100)
+	{
+		int splace = strHTML.Find(_T("a href=\"magnet"));
+		int eplace = strHTML.Mid(splace).Find(_T(">magnet"));
+		if (splace == -1 || eplace == -1)	{ return FALSE; }
+		CString strTmpLINK= strHTML.Mid(splace+7 , eplace -7);
+		strTmpLINK.Replace(_T("\""), _T(""));
+		return strTmpLINK;
+	}
+	return NULL;
+}
+bool CGetInternetSearch::DownloadStrings(LPCTSTR szUrl, CString &str)
+{
+
+	HINTERNET hInet = NULL;
+	HINTERNET hUrl = NULL;
+	DWORD dwBuf = 1024 * 1024, dwRead = 0; //1M
+	auto_ptr<char> szBuf(new char[dwBuf]);
+	memset(szBuf.get(), 0, dwBuf);
+	bool bRet = false;
+	try
+	{
+		hInet = InternetOpen(NULL, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+		if (hInet == NULL)
+			throw "error";
+		hUrl = InternetOpenUrl(hInet, szUrl, NULL, 0,
+			INTERNET_FLAG_TRANSFER_BINARY | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
+		if (hUrl == NULL)
+			throw "error";
+		for (;;)
+		{
+			if (!InternetReadFile(hUrl, szBuf.get(), dwBuf, &dwRead))
+			{
+				bRet = false;
+				break;
+			}
+			if (dwRead == 0)
+			{
+				bRet = true;
+				break;
+			}
+
+
+			char *szBufx = (char*)malloc(dwRead + 1);
+			memset(szBufx, 0, dwRead + 1);
+			memcpy(szBufx, szBuf.get(), dwRead);
+
+			CString strBufx(szBufx);
+			str = str + strBufx;
+
+			free(szBufx);
+
+			//strTmp += std::string(szBuf,dwRead);
+		}
+		throw "ok";
+	}
+	catch (...)
+	{
+		if (hUrl != NULL)
+			InternetCloseHandle(hUrl);
+		if (hInet != NULL)
+			InternetCloseHandle(hInet);
 	}
 
-	return TRUE;
+	return bRet;
+}
+
+CString CGetInternetSearch::Utf8ToStringT(LPSTR str)
+{
+	_ASSERT(str);
+	USES_CONVERSION;
+	WCHAR *buf;
+	int length = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
+	buf = new WCHAR[length + 1];
+	ZeroMemory(buf, (length + 1) * sizeof(WCHAR));
+	MultiByteToWideChar(CP_UTF8, 0, str, -1, buf, length);
+
+	return (CString(W2T(buf)));
+}
+
+
+CString CGetInternetSearch::UrlDecode(LPCTSTR url)
+{
+	_ASSERT(url);
+	USES_CONVERSION;
+	LPSTR _url = T2A(const_cast<LPTSTR>(url));
+	int i = 0;
+	int length = (int)strlen(_url);
+	CHAR *buf = new CHAR[length];
+	ZeroMemory(buf, length);
+	LPSTR p = buf;
+	char tmp[4];
+	while (i < length)
+	{
+		if (i <= length - 3 && _url[i] == '%' && IsHexNum(_url[i + 1]) && IsHexNum(_url[i + 2]))
+		{
+			memset(tmp, 0, sizeof(tmp));
+			memcpy(tmp, _url + i + 1, 2);
+			sscanf(tmp, "%x", p++);
+			i += 3;
+		}
+		else
+		{
+			*(p++) = _url[i++];
+		}
+	}
+	return Utf8ToStringT(buf);
 }
