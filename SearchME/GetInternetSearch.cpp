@@ -33,7 +33,7 @@ BOOL CGetInternetSearch::SearchItem(CString strKeyWord,CString &html)
 			file = (CHttpFile *)session.OpenURL(strBaiduSearch);
 			if(file)
 			{
-				TCHAR line[1024*2];
+				TCHAR line[1024 * 2] = {0};
 				while(file->ReadString(line,1024*2) != NULL)
 				{
 					int nBufferSize = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)line, -1, NULL, 0);
@@ -156,10 +156,16 @@ BOOL CGetInternetSearch::ParserHtmlListName(CString testbuffer)
 
 		//Size
 		int sSize = testbuffer.Find(_T("cpill yellow-pill"));
-		int eSize = testbuffer.Mid(sSize).Find(_T("</span>"));
+		int eSize = testbuffer.Mid(sSize).Find(_T("</b>"));
 		if (sSize != -1 && eSize != -1)	{ 
 			//cout<<testbuffer.Mid(sSize+13,eSize-sSize-13)<<endl;
-			m_Search.SearchSize = testbuffer.Mid(sSize + 19, eSize - 24);
+			m_Search.SearchSize = testbuffer.Mid(sSize + 19, eSize-19);
+		}
+		else{
+			int sSize_sub = testbuffer.Find(_T("File Size£º"));
+			CString ss = testbuffer.Mid(sSize_sub);
+			int eSize_sub = testbuffer.Mid(sSize_sub).Find(_T("</b>"));
+			m_Search.SearchSize = testbuffer.Mid(sSize_sub + 38, eSize_sub - 38);
 		}
 		
 
@@ -272,8 +278,9 @@ CString CGetInternetSearch::Utf8ToStringT(LPSTR str)
 	buf = new WCHAR[length + 1];
 	ZeroMemory(buf, (length + 1) * sizeof(WCHAR));
 	MultiByteToWideChar(CP_UTF8, 0, str, -1, buf, length);
-
-	return (CString(W2T(buf)));
+	CString str_ret = (W2T(buf));
+	delete[] buf;
+	return str_ret;
 }
 
 
@@ -287,7 +294,7 @@ CString CGetInternetSearch::UrlDecode(LPCTSTR url)
 	CHAR *buf = new CHAR[length];
 	ZeroMemory(buf, length);
 	LPSTR p = buf;
-	char tmp[4];
+	char tmp[4] = { 0 };
 	while (i < length)
 	{
 		if (i <= length - 3 && _url[i] == '%' && IsHexNum(_url[i + 1]) && IsHexNum(_url[i + 2]))
@@ -302,5 +309,7 @@ CString CGetInternetSearch::UrlDecode(LPCTSTR url)
 			*(p++) = _url[i++];
 		}
 	}
-	return Utf8ToStringT(buf);
+	CString strbuf = Utf8ToStringT(buf);
+	delete[] buf;
+	return strbuf;
 }
